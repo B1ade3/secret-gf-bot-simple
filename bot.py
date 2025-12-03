@@ -8,7 +8,6 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 DEEPSEEK_KEY = os.getenv('DEEPSEEK_KEY', '')
 CHAT_MEMORY_FILE = 'chat_memory.json'
 
-# Глобальное создание app (фикс для scope ошибки)
 app = Application.builder().token(TELEGRAM_TOKEN).build()
 
 def load_memory(user_id):
@@ -82,8 +81,14 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Bot started successfully!")
-    app.run_polling(drop_pending_updates=True)
+    try:
+        app.run_polling()
+    except AttributeError as e:
+        if 'update_polling_cleanup_ob' in str(e):
+            print("Bypassing known polling bug...")
+            app.run_polling(allowed_updates=[])  # Альтернативный polling без cleanup
+        else:
+            raise e
 
 if __name__ == '__main__':
     main()
-
