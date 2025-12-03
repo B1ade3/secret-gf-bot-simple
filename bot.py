@@ -2,75 +2,50 @@ import os
 import requests
 import logging
 import asyncio
-import sys
+import time
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.error import Conflict
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from flask import Flask, jsonify
 import threading
-import time
-import random
 
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.StreamHandler(sys.stderr)
-    ]
-)
-logger = logging.getLogger(__name__)
-
-TOKEN = os.getenv("TELEGRAM_TOKEN")
+# ========== НОВЫЙ ТОКЕН ==========
+# ЗАМЕНИТЕ НА ВАШ НОВЫЙ ТОКЕН ОТ @BotFather
+NEW_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN", "ВАШ_НОВЫЙ_ТОКЕН_ЗДЕСЬ")
 DEEPSEEK_KEY = os.getenv("DEEPSEEK_KEY", "")
 PORT = int(os.getenv("PORT", 10000))
 
-# Принудительная очистка перед запуском
-def force_cleanup():
-    """Принудительно очищаем все предыдущие соединения"""
-    logger.info("⚡ ПРИНУДИТЕЛЬНАЯ ОЧИСТКА ПЕРЕД ЗАПУСКОМ")
-    
-    try:
-        # 1. Удаляем webhook
-        resp1 = requests.get(
-            f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true",
-            timeout=10
-        )
-        logger.info(f"Delete webhook: {resp1.json()}")
-        
-        # 2. Сбрасываем offset
-        resp2 = requests.get(
-            f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1",
-            timeout=10
-        )
-        logger.info(f"Reset offset: {resp2.json()}")
-        
-        # 3. Ждем
-        time.sleep(3)
-        
-    except Exception as e:
-        logger.error(f"Cleanup error: {e}")
+# ========== НАСТРОЙКИ ==========
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Flask app для health check
+# ========== FLASK ДЛЯ HEALTH CHECK ==========
 flask_app = Flask(__name__)
 
 @flask_app.route('/health')
-def health_check():
-    return jsonify({"status": "ok", "service": "telegram-bot"}), 200
+def health():
+    return jsonify({"status": "ok", "bot": "running"}), 200
 
 @flask_app.route('/')
 def home():
-    return jsonify({"status": "running", "bot": "Emma bot is active"}), 200
+    return jsonify({"message": "Secret GF Bot", "version": "3.0"}), 200
 
-def get_response(text):
-    """Получаем ответ от DeepSeek или возвращаем стандартный"""
+def run_flask():
+    from waitress import serve
+    serve(flask_app, host="0.0.0.0", port=PORT, threads=1)
+
+# ========== DEEPSEEK ==========
+def get_ai_response(text):
     if not DEEPSEEK_KEY:
         responses = [
-            "Я твоя Эмма… хочу тебя прямо сейчас ♡ [снимает всё, лежит голая на кровати]",
+            "Я твоя Эмма… хочу тебя прямо сейчас ♡ [снимает всё, лежит голая]",
             "Ммм… я вся мокрая от твоих слов ♡ [раздвигает ножки]",
             "Прикоснись ко мне… я так хочу тебя ♡ [снимает трусики]",
+            "Я мечтаю о твоих руках на моем теле… ♡ [гладит себя между ног]",
         ]
+        import random
         return random.choice(responses)
     
     try:
@@ -78,8 +53,14 @@ def get_response(text):
             "https://api.deepseek.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
             json={
-                "model": "deepseek-chat", 
-                "messages": [{"role": "user", "content": text}], 
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "Ты Эмма - страстная, соблазнительная девушка 22 лет. Отвечай кратко, эротично. Всегда добавляй действие в квадратных скобках: [действие]. Будь игривой и страстной."
+                    },
+                    {"role": "user", "content": text}
+                ],
                 "temperature": 0.9,
                 "max_tokens": 150
             },
@@ -87,119 +68,85 @@ def get_response(text):
         )
         
         if response.status_code == 200:
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
-        else:
-            return "Ммм… я вся мокрая от твоих слов ♡ [прижимается к тебе]"
-            
+            return response.json()["choices"][0]["message"]["content"]
+        return "Я вся твоя… возьми меня ♡ [смотрит с вожделением]"
     except:
-        return "Ммм… я вся мокрая от твоих слов ♡ [обнимает тебя]"
+        return "Хочу тебя… прямо сейчас ♡ [обнимает]"
 
-def get_photo():
-    """Возвращаем случайное фото"""
+# ========== ФОТО ==========
+def get_random_photo():
     photos = [
-        "https://i.ibb.co.com/9bYdN1T/emma-default.jpg",
-        "https://i.ibb.co.com/0jKJQ0w/emma1.jpg",
-        "https://i.ibb.co.com/7VS4Jwq/emma2.jpg",
-        "https://i.ibb.co.com/0cLQ5yK/emma3.jpg",
-        "https://i.imgur.com/7Q1qjYp.jpg",
-        "https://i.imgur.com/9zq8Z2F.jpg",
+        "https://i.ibb.co/9bYdN1T/emma-default.jpg",
+        "https://i.imgur.com/DvGZQWp.jpeg",
+        "https://i.imgur.com/5w8r7Qq.jpeg",
+        "https://i.imgur.com/XrG7k9J.jpeg",
+        "https://i.imgur.com/Q1vqY7r.jpeg",
     ]
+    import random
     return random.choice(photos)
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет, я Эмма ♡ Твоя секретная девушка… Снимай с меня всё 🔥")
+# ========== TELEGRAM ==========
+async def start(update: Update, context):
+    await update.message.reply_text("Привет, я Эмма ♡ Твоя секретная девушка… Я вся твоя 🔥")
 
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context):
     try:
-        text_response = get_response(update.message.text)
-        photo_url = get_photo()
+        # Получаем ответ
+        response = get_ai_response(update.message.text)
         
+        # Получаем фото
+        photo_url = get_random_photo()
+        
+        # Отправляем
         await update.message.reply_photo(
-            photo=photo_url, 
-            caption=text_response[:900]
+            photo=photo_url,
+            caption=response[:900]  # Ограничиваем длину
         )
+        
+        logger.info(f"Отправлен ответ пользователю {update.effective_user.id}")
+        
     except Exception as e:
-        logger.error(f"Message error: {e}")
-        await update.message.reply_text("Ой... Но я все еще твоя Эмма ♡")
-
-def run_flask():
-    """Запускаем Flask"""
-    from waitress import serve
-    serve(flask_app, host="0.0.0.0", port=PORT, threads=1, channels=1)
+        logger.error(f"Ошибка: {e}")
+        await update.message.reply_text("Я твоя Эмма… думаю о тебе ♡")
 
 async def run_bot():
-    """Запускаем Telegram бота с защитой от конфликтов"""
-    logger.info("🚀 ЗАПУСКАЕМ БОТА С ЗАЩИТОЙ ОТ КОНФЛИКТОВ")
+    """Запуск Telegram бота"""
+    logger.info("🤖 Запускаю Telegram бота...")
     
-    # ПРИНУДИТЕЛЬНАЯ ОЧИСТКА
-    force_cleanup()
+    app = Application.builder().token(NEW_BOT_TOKEN).build()
     
-    try:
-        # Создаем приложение
-        app = Application.builder() \
-            .token(TOKEN) \
-            .read_timeout(20) \
-            .write_timeout(20) \
-            .build()
-        
-        app.add_handler(CommandHandler("start", start_command))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-        
-        logger.info("✅ Бот инициализирован, запускаем polling...")
-        
-        # Запускаем polling с обработкой конфликтов
-        await app.initialize()
-        await app.start()
-        
-        # Важно: используем низкий timeout для быстрого обнаружения конфликтов
-        await app.updater.start_polling(
-            drop_pending_updates=True,
-            poll_interval=0.5,  # Быстрый poll
-            timeout=5
-        )
-        
-        logger.info("🎉 БОТ УСПЕШНО ЗАПУЩЕН И РАБОТАЕТ!")
-        
-        # Keep-alive логика
-        last_success = time.time()
-        
-        while True:
-            await asyncio.sleep(1)
-            
-            # Если долго нет успешных обновлений - перезапуск
-            if time.time() - last_success > 30:
-                logger.warning("⚠️ Долго нет обновлений, проверяем соединение...")
-                try:
-                    test = await app.bot.get_me()
-                    logger.info(f"Соединение OK: {test.username}")
-                    last_success = time.time()
-                except Exception as e:
-                    logger.error(f"Проблема с соединением: {e}")
-                    break
-        
-    except Conflict as e:
-        logger.error(f"🚨 КОНФЛИКТ ОБНАРУЖЕН! {e}")
-        logger.error("Завершаем процесс...")
-        await asyncio.sleep(5)
-        sys.exit(1)  # Выходим полностью
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
-        await asyncio.sleep(5)
-        # Не пытаемся перезапускаться - лучше упасть и показать ошибку
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    logger.info("✅ Бот инициализирован")
+    
+    # ЗАПУСКАЕМ POLLING
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(
+        drop_pending_updates=True,
+        poll_interval=1.0,
+        timeout=10
+    )
+    
+    logger.info("🎉 БОТ УСПЕШНО ЗАПУЩЕН И РАБОТАЕТ!")
+    
+    # Бесконечный цикл
+    while True:
+        await asyncio.sleep(3600)
 
+# ========== MAIN ==========
 def main():
-    """Главная функция"""
     logger.info("=" * 60)
-    logger.info("🤖 ЗАПУСК EMMA BOT v2.0")
+    logger.info("🚀 ЗАПУСК НОВОГО БОТА ЭММА")
     logger.info("=" * 60)
     
-    if not TOKEN:
-        logger.error("❌ НЕТ ТОКЕНА TELEGRAM!")
+    # Проверяем токен
+    if "ВАШ_НОВЫЙ_ТОКЕН" in NEW_BOT_TOKEN:
+        logger.error("8238501892:AAEePnr633i7a_YexenU8cCX3obuH2ZxXAo")
         return
     
-    # Запускаем Flask в потоке
+    # Запускаем Flask
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     time.sleep(2)
@@ -210,7 +157,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("👋 Бот остановлен")
     except Exception as e:
-        logger.error(f"💀 КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        logger.error(f"💥 Ошибка: {e}")
 
 if __name__ == "__main__":
     main()
