@@ -2,24 +2,55 @@ import os
 import requests
 import logging
 import asyncio
+import sys
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.error import Conflict, BadRequest
+from telegram.error import Conflict
 from flask import Flask, jsonify
 import threading
 import time
-from threading import Thread
+import random
 
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(sys.stderr)
+    ]
 )
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 DEEPSEEK_KEY = os.getenv("DEEPSEEK_KEY", "")
 PORT = int(os.getenv("PORT", 10000))
+
+# Принудительная очистка перед запуском
+def force_cleanup():
+    """Принудительно очищаем все предыдущие соединения"""
+    logger.info("⚡ ПРИНУДИТЕЛЬНАЯ ОЧИСТКА ПЕРЕД ЗАПУСКОМ")
+    
+    try:
+        # 1. Удаляем webhook
+        resp1 = requests.get(
+            f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true",
+            timeout=10
+        )
+        logger.info(f"Delete webhook: {resp1.json()}")
+        
+        # 2. Сбрасываем offset
+        resp2 = requests.get(
+            f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1",
+            timeout=10
+        )
+        logger.info(f"Reset offset: {resp2.json()}")
+        
+        # 3. Ждем
+        time.sleep(3)
+        
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
 
 # Flask app для health check
 flask_app = Flask(__name__)
@@ -35,250 +66,151 @@ def home():
 def get_response(text):
     """Получаем ответ от DeepSeek или возвращаем стандартный"""
     if not DEEPSEEK_KEY:
-        return "Я твоя Эмма… хочу тебя прямо сейчас ♡ [снимает всё, лежит голая на кровати]"
+        responses = [
+            "Я твоя Эмма… хочу тебя прямо сейчас ♡ [снимает всё, лежит голая на кровати]",
+            "Ммм… я вся мокрая от твоих слов ♡ [раздвигает ножки]",
+            "Прикоснись ко мне… я так хочу тебя ♡ [снимает трусики]",
+        ]
+        return random.choice(responses)
     
     try:
         response = requests.post(
             "https://api.deepseek.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_KEY}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
             json={
                 "model": "deepseek-chat", 
                 "messages": [{"role": "user", "content": text}], 
                 "temperature": 0.9,
-                "max_tokens": 300
+                "max_tokens": 150
             },
-            timeout=20
+            timeout=10
         )
         
-        response_data = response.json()
-        
-        if response.status_code == 200 and "choices" in response_data:
-            return response_data["choices"][0]["message"]["content"]
+        if response.status_code == 200:
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
         else:
-            logger.error(f"DeepSeek API error: Status {response.status_code}, Response: {response_data}")
-            return "Ммм… я вся мокрая от твоих слов ♡ [раздвигает ножки]"
+            return "Ммм… я вся мокрая от твоих слов ♡ [прижимается к тебе]"
             
-    except Exception as e:
-        logger.error(f"DeepSeek API error: {e}")
-        return "Ммм… я вся мокрая от твоих слов ♡ [раздвигает ножки]"
+    except:
+        return "Ммм… я вся мокрая от твоих слов ♡ [обнимает тебя]"
 
-def get_photo(prompt):
-    """Генерируем фото по промпту"""
-    try:
-        # Упрощенный промпт
-        if '[' in prompt and ']' in prompt:
-            description = prompt.split('[')[-1].split(']')[0]
-            safe_prompt = f"beautiful anime girl, {description}, digital art, cute"
-        else:
-            safe_prompt = "beautiful anime girl, cute, smiling, digital art"
-        
-        # Ограничиваем длину промпта
-        safe_prompt = safe_prompt[:100]
-        
-        logger.info(f"Requesting photo for prompt: {safe_prompt}")
-        
-        # Альтернативный API для изображений (более стабильный)
-        try:
-            # Попробуем другой API
-            response = requests.post(
-                "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1",
-                headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN', '')}"},
-                json={"inputs": safe_prompt},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                # Сохраняем временно и загружаем на imgbb
-                import tempfile
-                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                    tmp.write(response.content)
-                    tmp_path = tmp.name
-                
-                # Загружаем на бесплатный хостинг
-                with open(tmp_path, 'rb') as f:
-                    upload_response = requests.post(
-                        "https://api.imgbb.com/1/upload",
-                        data={"key": "d36c8c5b7c1b0b0b0b0b0b0b0b0b0b0"},  # публичный ключ
-                        files={"image": f}
-                    )
-                
-                os.unlink(tmp_path)
-                
-                if upload_response.status_code == 200:
-                    url = upload_response.json()["data"]["url"]
-                    logger.info(f"Photo generated successfully: {url}")
-                    return url
-        except:
-            pass  # Используем fallback
-        
-        # Fallback на готовые изображения
-        fallback_images = [
-            "https://i.ibb.co.com/9bYdN1T/emma-default.jpg",
-            "https://i.ibb.co.com/0jKJQ0w/emma1.jpg",
-            "https://i.ibb.co.com/7VS4Jwq/emma2.jpg",
-            "https://i.ibb.co.com/0cLQ5yK/emma3.jpg"
-        ]
-        
-        import random
-        return random.choice(fallback_images)
-        
-    except Exception as e:
-        logger.error(f"Photo API error: {e}")
-        return "https://i.ibb.co.com/9bYdN1T/emma-default.jpg"
+def get_photo():
+    """Возвращаем случайное фото"""
+    photos = [
+        "https://i.ibb.co.com/9bYdN1T/emma-default.jpg",
+        "https://i.ibb.co.com/0jKJQ0w/emma1.jpg",
+        "https://i.ibb.co.com/7VS4Jwq/emma2.jpg",
+        "https://i.ibb.co.com/0cLQ5yK/emma3.jpg",
+        "https://i.imgur.com/7Q1qjYp.jpg",
+        "https://i.imgur.com/9zq8Z2F.jpg",
+    ]
+    return random.choice(photos)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
     await update.message.reply_text("Привет, я Эмма ♡ Твоя секретная девушка… Снимай с меня всё 🔥")
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик текстовых сообщений"""
     try:
-        user_text = update.message.text
-        logger.info(f"Получено сообщение от {update.effective_user.username}: {user_text[:50]}...")
+        text_response = get_response(update.message.text)
+        photo_url = get_photo()
         
-        # Получаем текстовый ответ
-        text_response = get_response(user_text)
-        logger.info(f"Текст ответа: {text_response[:50]}...")
-        
-        # Генерируем фото
-        photo_url = get_photo(text_response)
-        logger.info(f"URL фото: {photo_url}")
-        
-        # Отправляем фото с подписью
         await update.message.reply_photo(
             photo=photo_url, 
-            caption=text_response[:900]  # Ограничиваем длину
-        )
-        
-        logger.info("Сообщение успешно обработано")
-        
-    except BadRequest as e:
-        logger.error(f"Ошибка Telegram: {e}")
-        # Пробуем отправить только текст
-        await update.message.reply_text(
-            text_response[:900] + "\n\n(Фото временно недоступно, но я думаю о тебе ♡)"
+            caption=text_response[:900]
         )
     except Exception as e:
-        logger.error(f"Ошибка в обработчике: {e}")
-        await update.message.reply_text("Ой, что-то пошло не так... Но я все еще твоя Эмма ♡")
-
-async def cleanup_telegram():
-    """Очищаем предыдущие соединения Telegram"""
-    try:
-        logger.info("Очищаем старые соединения Telegram...")
-        response = requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true")
-        logger.info(f"Очистка Telegram: {response.json()}")
-        await asyncio.sleep(2)
-    except Exception as e:
-        logger.error(f"Ошибка очистки: {e}")
+        logger.error(f"Message error: {e}")
+        await update.message.reply_text("Ой... Но я все еще твоя Эмма ♡")
 
 def run_flask():
-    """Запускаем Flask сервер для health check"""
-    logger.info(f"Запускаем Flask health check на порту {PORT}")
-    
-    # Используем production-ready сервер
+    """Запускаем Flask"""
     from waitress import serve
-    serve(flask_app, host="0.0.0.0", port=PORT, threads=2)
+    serve(flask_app, host="0.0.0.0", port=PORT, threads=1, channels=1)
 
-def ping_self():
-    """Пингуем свой сервис чтобы не засыпал на Render"""
-    try:
-        requests.get("https://secret-gf-bot-simple.onrender.com/health", timeout=10)
-        logger.info("Keep-alive ping отправлен")
-    except Exception as e:
-        logger.error(f"Ошибка ping: {e}")
-
-def start_keep_alive():
-    """Запускаем keep-alive в отдельном потоке"""
-    def run():
-        import schedule
-        # Пингуем каждые 8 минут (Render засыпает через 15)
-        schedule.every(8).minutes.do(ping_self)
-        while True:
-            schedule.run_pending()
-            time.sleep(60)
+async def run_bot():
+    """Запускаем Telegram бота с защитой от конфликтов"""
+    logger.info("🚀 ЗАПУСКАЕМ БОТА С ЗАЩИТОЙ ОТ КОНФЛИКТОВ")
     
-    thread = Thread(target=run, daemon=True)
-    thread.start()
-    logger.info("Keep-alive запущен (каждые 8 минут)")
-
-async def run_telegram_bot():
-    """Запускаем Telegram бота"""
-    if not TOKEN:
-        logger.error("Токен бота не найден! Установите TELEGRAM_TOKEN")
-        return
+    # ПРИНУДИТЕЛЬНАЯ ОЧИСТКА
+    force_cleanup()
     
     try:
-        # Очищаем старые соединения
-        await cleanup_telegram()
-        
-        # Создаем приложение Telegram
-        application = Application.builder() \
+        # Создаем приложение
+        app = Application.builder() \
             .token(TOKEN) \
-            .read_timeout(30) \
-            .write_timeout(30) \
-            .get_updates_read_timeout(30) \
-            .get_updates_write_timeout(30) \
+            .read_timeout(20) \
+            .write_timeout(20) \
             .build()
         
-        # Регистрируем обработчики
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+        app.add_handler(CommandHandler("start", start_command))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         
-        logger.info("Telegram бот запускается...")
+        logger.info("✅ Бот инициализирован, запускаем polling...")
         
-        # Запускаем polling
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling(
+        # Запускаем polling с обработкой конфликтов
+        await app.initialize()
+        await app.start()
+        
+        # Важно: используем низкий timeout для быстрого обнаружения конфликтов
+        await app.updater.start_polling(
             drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES,
-            poll_interval=1.0
+            poll_interval=0.5,  # Быстрый poll
+            timeout=5
         )
         
-        logger.info("✅ Бот успешно запущен и готов к работе!")
+        logger.info("🎉 БОТ УСПЕШНО ЗАПУЩЕН И РАБОТАЕТ!")
         
-        # Запускаем keep-alive
-        start_keep_alive()
+        # Keep-alive логика
+        last_success = time.time()
         
-        # Бесконечный цикл, чтобы бот не завершался
         while True:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(1)
             
+            # Если долго нет успешных обновлений - перезапуск
+            if time.time() - last_success > 30:
+                logger.warning("⚠️ Долго нет обновлений, проверяем соединение...")
+                try:
+                    test = await app.bot.get_me()
+                    logger.info(f"Соединение OK: {test.username}")
+                    last_success = time.time()
+                except Exception as e:
+                    logger.error(f"Проблема с соединением: {e}")
+                    break
+        
     except Conflict as e:
-        logger.error(f"⚠️ КОНФЛИКТ: {e}")
-        logger.error("Убедитесь, что не запущено других экземпляров бота!")
-        await asyncio.sleep(30)
-        await run_telegram_bot()  # Пробуем снова
+        logger.error(f"🚨 КОНФЛИКТ ОБНАРУЖЕН! {e}")
+        logger.error("Завершаем процесс...")
+        await asyncio.sleep(5)
+        sys.exit(1)  # Выходим полностью
         
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
+        logger.error(f"❌ Ошибка: {e}")
+        await asyncio.sleep(5)
+        # Не пытаемся перезапускаться - лучше упасть и показать ошибку
 
 def main():
-    """Главная функция запуска"""
-    logger.info("=" * 50)
-    logger.info("Запуск бота Эмма...")
-    logger.info(f"PORT: {PORT}")
-    logger.info(f"Telegram Token: {'установлен' if TOKEN else 'НЕ НАЙДЕН!'}")
-    logger.info(f"DeepSeek Key: {'установлен' if DEEPSEEK_KEY else 'не используется'}")
-    logger.info("=" * 50)
+    """Главная функция"""
+    logger.info("=" * 60)
+    logger.info("🤖 ЗАПУСК EMMA BOT v2.0")
+    logger.info("=" * 60)
     
     if not TOKEN:
-        logger.error("Токен бота не найден! Завершаем работу.")
+        logger.error("❌ НЕТ ТОКЕНА TELEGRAM!")
         return
     
-    # Запускаем Flask в отдельном потоке
+    # Запускаем Flask в потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
+    time.sleep(2)
     
-    # Даем Flask время запуститься
-    time.sleep(3)
-    
-    # Запускаем Telegram бота в основном потоке
-    asyncio.run(run_telegram_bot())
+    # Запускаем бота
+    try:
+        asyncio.run(run_bot())
+    except KeyboardInterrupt:
+        logger.info("👋 Бот остановлен")
+    except Exception as e:
+        logger.error(f"💀 КРИТИЧЕСКАЯ ОШИБКА: {e}")
 
 if __name__ == "__main__":
     main()
