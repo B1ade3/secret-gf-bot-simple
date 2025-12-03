@@ -8,6 +8,9 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 DEEPSEEK_KEY = os.getenv('DEEPSEEK_KEY', '')
 CHAT_MEMORY_FILE = 'chat_memory.json'
 
+# ← ЭТА СТРОКА БЫЛА ПОТЕРЯНА В ПРЕДЫДУЩЕМ ВАРИАНТЕ
+app = Application.builder().token(TELEGRAM_TOKEN).build()
+
 def load_memory(user_id):
     try:
         with open(CHAT_MEMORY_FILE, 'r') as f:
@@ -33,9 +36,7 @@ def get_ai_response(user_msg, history):
     
     url = "https://api.deepseek.com/v1/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_KEY}", "Content-Type": "application/json"}
-    messages = [
-        {"role": "system", "content": "Ты — Эмма, 22-летняя секретная девушка. Загадочная, страстная, помнишь прошлые разговоры. Отвечай эмоционально, развивай сюжет. В конце ответа добавляй [описание сцены для фото: эмоция, поза, одежда, обстановка]. NSFW естественно."}
-    ] + history + [{"role": "user", "content": user_msg}]
+    messages = [{"role": "system", "content": "Ты — Эмма, 22-летняя секретная девушка. Загадочная, страстная, помнишь прошлые разговоры. Отвечай эмоционально, развивай сюжет. В конце ответа добавляй [описание сцены для фото: эмоция, поза, одежда, обстановка]. NSFW естественно."}] + history + [{"role": "user", "content": user_msg}]
     
     data = {"model": "deepseek-chat", "messages": messages, "temperature": 0.9, "max_tokens": 300}
     r = requests.post(url, headers=headers, json=data)
@@ -62,11 +63,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history = load_memory(user_id)
     ai_text = get_ai_response(user_msg, history)
     
-    if '[' in ai_text and ']' in ai_text:
-        description = ai_text.split('[')[-1].split(']')[0]
-    else:
-        description = "smiling softly in cozy bedroom"
-    
+    description = ai_text.split('[')[-1].split(']')[0] if '[' in ai_text and ']' in ai_text else "smiling softly in cozy bedroom"
     img_url = get_flux_image(description)
     
     await update.message.reply_photo(photo=img_url, caption=ai_text)
